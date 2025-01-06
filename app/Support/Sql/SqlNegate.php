@@ -1,13 +1,12 @@
 <?php
 
-namespace App\Http\Controllers;
-
+namespace App\Support\Sql;
 
 use Illuminate\Contracts\Database\Query\Expression;
 use Illuminate\Database\Grammar;
 use Stringable;
 
-class SqlAvg implements Expression, Stringable
+class SqlNegate implements Expression, Stringable
 {
     private string $expression;
 
@@ -21,8 +20,8 @@ class SqlAvg implements Expression, Stringable
         return (string) $this;
     }
 
-    public function __toString()
+    public function __toString(): string
     {
-        return "AVG($this->expression)";
+        return "-$this->expression";
     }
 }

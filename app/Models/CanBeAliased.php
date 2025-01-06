@@ -2,8 +2,8 @@
 
 namespace App\Models;
 
-use App\Http\Controllers\SqlAlias;
 use App\QueryBuilders\Alias;
+use App\Support\Sql\SqlAlias;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Query\Expression;
 

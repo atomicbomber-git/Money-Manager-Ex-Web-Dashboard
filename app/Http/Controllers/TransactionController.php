@@ -5,6 +5,12 @@ namespace App\Http\Controllers;
 use App\Models\Account;
 use App\Models\Payee;
 use App\Models\Transaction;
+use App\Support\Sql\SqlAlias;
+use App\Support\Sql\SqlCase;
+use App\Support\Sql\SqlEqual;
+use App\Support\Sql\SqlIfThenElse;
+use App\Support\Sql\SqlNegate;
+use App\Support\Sql\SqlQuote;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -203,7 +209,7 @@ class TransactionController extends Controller
                 "payee" => $this->payeeModel->qualifyColumn('PAYEENAME'),
                 "notes" => $this->transactionModel->notesCol(),
                 "relative_amount" => $this->relativeAmountExpression($accountId),
-            ][$sortColumn], $sortIsAscending ? "ASC" : "DESC"
+            ][$sortColumn] ?? $this->transactionModel->transactionIdCol(), $sortIsAscending ? "ASC" : "DESC"
             );
     }
 
@@ -213,13 +219,22 @@ class TransactionController extends Controller
      */
     public function relativeAmountExpression(mixed $accountId): SqlIfThenElse
     {
+        $typeCol = $this->transactionModel->transactionTypeCol();
+        $amountCol = $this->transactionModel->transactionAmountCol();
+
+        $case = new SqlCase([
+            (string) new SqlEqual($typeCol, new SqlQuote(Transaction::TypeWithdrawal)) => new SqlNegate($amountCol),
+            (string) new SqlEqual($typeCol, new SqlQuote(Transaction::TypeDeposit)) => $amountCol,
+            (string) new SqlEqual($typeCol, new SqlQuote(Transaction::TypeTransfer)) => new SqlNegate($amountCol),
+        ], 0);
+
         return new SqlIfThenElse(
             new SqlEqual(
                 $this->accountToModel->accountIdCol(),
                 ($accountId ?? "NULL")
             ),
             $this->transactionModel->transactionAmountCol(),
-            "-" . $this->transactionModel->transactionAmountCol()
+            $case
         );
     }
 
