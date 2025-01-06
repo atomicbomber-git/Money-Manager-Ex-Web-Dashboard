@@ -17,8 +17,8 @@ class TransactionIndex extends Component {
             account_to_id: props.accountToId,
             payee_id: props.payee_id,
             records: [],
-            sort_column: 'amount',
-            sort_is_ascending: true,
+            sort_column: 'date',
+            sort_is_ascending: false,
         }
     }
 

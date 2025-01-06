@@ -15,7 +15,6 @@ use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\HigherOrderWhenProxy;
 use Inertia\Inertia;
 
 
@@ -46,44 +45,73 @@ class TransactionController extends Controller
 
     public function index(Request $request)
     {
-        $type = $request->get("type");
-        $search = $request->get("search");
-        $categoryId = $request->get("category_id");
-        $timeFrom = $request->get("time_from") ? Carbon::parse($request->get("time_from")) : null;
-        $timeTo = $request->get("time_to") ? Carbon::parse($request->get("time_to")) : null;
-        $sortColumn = $request->get("sort_column");
-        $sortIsAscending = (boolean)$request->get("sort_is_ascending");
-        $payeeId = $request->get("payee_id");
-        $accountId = $request->get("account_id");
-        $accountFromId = $request->get("account_from_id");
-        $accountToId = $request->get("account_to_id");
-
-
-        $query = $this->query($accountId, $search, $accountFromId, $accountToId, $payeeId, $type, $categoryId, $timeFrom, $timeTo, $sortColumn, $sortIsAscending);
-
-
         return JsonResource::collection(
-            $query
+            $this->indexQuery($request)
                 ->paginate()
         );
     }
 
+    public function params(Request $request)
+    {
+        return new class($request) {
+            public mixed $type;
+            public mixed $search;
+            public mixed $categoryId;
+            public ?Carbon $timeFrom;
+            public ?Carbon $timeTo;
+            public mixed $sortColumn;
+            public bool $sortIsAscending;
+            public mixed $payeeId;
+            public mixed $accountId;
+            public mixed $accountFromId;
+            public mixed $accountToId;
+
+            public function __construct(Request $request)
+            {
+                $this->type = $request->get("type");
+                $this->search = $request->get("search");
+                $this->categoryId = $request->get("category_id");
+                $this->timeFrom = $request->get("time_from") ? Carbon::parse($request->get("time_from")) : null;
+                $this->timeTo = $request->get("time_to") ? Carbon::parse($request->get("time_to")) : null;
+                $this->sortColumn = $request->get("sort_column");
+                $this->sortIsAscending = (boolean)$request->get("sort_is_ascending");
+                $this->payeeId = $request->get("payee_id");
+                $this->accountId = $request->get("account_id");
+                $this->accountFromId = $request->get("account_from_id");
+                $this->accountToId = $request->get("account_to_id");
+            }
+        };
+    }
+
     /**
      * @param mixed $accountId
-     * @param mixed $search
-     * @param mixed $accountFromId
-     * @param mixed $accountToId
-     * @param mixed $payeeId
-     * @param mixed $type
-     * @param mixed $categoryId
-     * @param Carbon|null $timeFrom
-     * @param Carbon|null $timeTo
-     * @param mixed $sortColumn
-     * @param bool $sortIsAscending
-     * @return Transaction|HigherOrderWhenProxy
+     * @return SqlIfThenElse
      */
-    public function query(mixed $accountId, mixed $search, mixed $accountFromId, mixed $accountToId, mixed $payeeId, mixed $type, mixed $categoryId, ?Carbon $timeFrom, ?Carbon $timeTo, mixed $sortColumn, bool $sortIsAscending): Builder
+    public function relativeAmountExpression(mixed $accountId): SqlIfThenElse
     {
+        $typeCol = $this->transactionModel->transactionTypeCol();
+        $amountCol = $this->transactionModel->transactionAmountCol();
+
+        $case = new SqlCase([
+            (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeWithdrawal)) => new SqlNegate($amountCol),
+            (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeDeposit)) => $amountCol,
+            (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeTransfer)) => new SqlNegate($amountCol),
+        ], 0);
+
+        return new SqlIfThenElse(
+            new SqlEqual(
+                $this->accountToModel->accountIdCol(),
+                ($accountId ?? "NULL")
+            ),
+            $this->transactionModel->transactionAmountCol(),
+            $case
+        );
+    }
+
+    public function indexQuery(Request $request): Builder
+    {
+        $params = $this->params($request);
+
         return $this->transactionModel
             ->select([
                 new SqlAlias($this->transactionModel->transactionIdCol(), 'transaction_id'),
@@ -97,7 +125,7 @@ class TransactionController extends Controller
                 new SqlAlias($this->transactionModel->notesCol(), 'notes'),
 
                 new SqlAlias(
-                    $this->relativeAmountExpression($accountId),
+                    $this->relativeAmountExpression($params->accountId),
                     "relative_amount"
                 )
             ])
@@ -114,9 +142,9 @@ class TransactionController extends Controller
             ->leftJoin(
                 $this->payeeModel->getTable(),
                 $this->payeeModel->qualifyColumn('PAYEEID'),
-                $this->transactionModel->qualifyColumn('PAYEEID'),
+                $this->transactionModel->payeeIdCol(),
             )
-            ->when($search, function (Builder $builder, string $search) {
+            ->when($params->search, function (Builder $builder, string $search) {
                 $builder->where(function (Builder $builder) use ($search) {
                     $builder->orWhere(
                         $this->accountFromModel->accountNameCol(),
@@ -141,59 +169,59 @@ class TransactionController extends Controller
                     );
                 });
             })
-            ->when($accountId, function (Builder $builder, $accountId) {
+            ->when($params->accountId, function (Builder $builder, $accountId) {
                 $builder->where(function (Builder $builder) use ($accountId) {
                     $builder->orWhere(
-                        $this->transactionModel->accountIdCol(),
+                        $this->transactionModel->fromAccountIdCol(),
                         $accountId
                     )->orWhere(
-                        $this->transactionModel->qualifyColumn('TOACCOUNTID'),
+                        $this->transactionModel->toAccountIdCol(),
                         $accountId
                     );
                 });
             })
-            ->when($accountFromId, function (Builder $builder, $accountFromId) {
+            ->when($params->accountFromId, function (Builder $builder, $accountFromId) {
                 $builder->where(
-                    $this->transactionModel->accountIdCol(),
+                    $this->transactionModel->fromAccountIdCol(),
                     $accountFromId
                 );
             })
-            ->when($accountToId, function (Builder $builder, $accountToId) {
+            ->when($params->accountToId, function (Builder $builder, $accountToId) {
                 $builder->where(
-                    $this->transactionModel->qualifyColumn('TOACCOUNTID'),
+                    $this->transactionModel->toAccountIdCol(),
                     $accountToId
                 );
             })
-            ->when($payeeId, function (Builder $builder, $payeeId) {
+            ->when($params->payeeId, function (Builder $builder, $payeeId) {
                 $builder->where(
-                    $this->transactionModel->qualifyColumn('PAYEEID'),
+                    $this->transactionModel->payeeIdCol(),
                     $payeeId
                 );
             })
-            ->when($type, function (Builder $builder, $type) {
+            ->when($params->type, function (Builder $builder, $type) {
                 $builder->where(
-                    $this->transactionModel->qualifyColumn('TRANSCODE'),
+                    $this->transactionModel->transactionTypeCol(),
                     $type
                 );
             })
-            ->when($categoryId, function (Builder $builder, $categoryId) {
+            ->when($params->categoryId, function (Builder $builder, $categoryId) {
                 $builder->where(
-                    $this->transactionModel->qualifyColumn('CATEGID'),
+                    $this->transactionModel->categoryIdCol(),
                     $categoryId
                 );
             })
             ->where(
-                $this->transactionModel->qualifyColumn('DELETEDTIME'),
+                $this->transactionModel->deletedTimeCol(),
                 ""
             )
-            ->when($timeFrom, function (Builder $builder, $timeFrom) {
+            ->when($params->timeFrom, function (Builder $builder, $timeFrom) {
                 $builder->where(
                     $this->transactionModel->transactionDateCol(),
                     '>=',
                     $timeFrom->format("Y-m-d")
                 );
             })
-            ->when($timeTo, function (Builder $builder, $timeTo) {
+            ->when($params->timeTo, function (Builder $builder, $timeTo) {
                 $builder->where(
                     $this->transactionModel->transactionDateCol(),
                     '<',
@@ -208,34 +236,9 @@ class TransactionController extends Controller
                 "date" => $this->transactionModel->transactionDateCol(),
                 "payee" => $this->payeeModel->qualifyColumn('PAYEENAME'),
                 "notes" => $this->transactionModel->notesCol(),
-                "relative_amount" => $this->relativeAmountExpression($accountId),
-            ][$sortColumn] ?? $this->transactionModel->transactionIdCol(), $sortIsAscending ? "ASC" : "DESC"
+                "relative_amount" => $this->relativeAmountExpression($params->accountId),
+            ][$params->sortColumn] ?? $this->transactionModel->transactionIdCol(), $params->sortIsAscending ? "ASC" : "DESC"
             );
-    }
-
-    /**
-     * @param mixed $accountId
-     * @return SqlIfThenElse
-     */
-    public function relativeAmountExpression(mixed $accountId): SqlIfThenElse
-    {
-        $typeCol = $this->transactionModel->transactionTypeCol();
-        $amountCol = $this->transactionModel->transactionAmountCol();
-
-        $case = new SqlCase([
-            (string) new SqlEqual($typeCol, new SqlQuote(Transaction::TypeWithdrawal)) => new SqlNegate($amountCol),
-            (string) new SqlEqual($typeCol, new SqlQuote(Transaction::TypeDeposit)) => $amountCol,
-            (string) new SqlEqual($typeCol, new SqlQuote(Transaction::TypeTransfer)) => new SqlNegate($amountCol),
-        ], 0);
-
-        return new SqlIfThenElse(
-            new SqlEqual(
-                $this->accountToModel->accountIdCol(),
-                ($accountId ?? "NULL")
-            ),
-            $this->transactionModel->transactionAmountCol(),
-            $case
-        );
     }
 
 }
