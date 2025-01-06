@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Route;
 
 
 
-Route::redirect("/", "/withdrawal-by-category/page");
+Route::redirect("/", "/transaction/page");
 Route::get("/account", [AccountController::class, "index"])->name("account.index");
 Route::get("/withdrawal-by-category/page", [WithdrawalByCategoryController::class, "indexPage"]);
 Route::get("/withdrawal-by-category", [WithdrawalByCategoryController::class, "index"]);

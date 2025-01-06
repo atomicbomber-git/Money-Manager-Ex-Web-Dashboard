@@ -9,6 +9,7 @@ use App\Support\Sql\SqlAlias;
 use App\Support\Sql\SqlCase;
 use App\Support\Sql\SqlEqual;
 use App\Support\Sql\SqlIfThenElse;
+use App\Support\Sql\SqlMultiply;
 use App\Support\Sql\SqlNegate;
 use App\Support\Sql\SqlQuote;
 use Carbon\Carbon;
@@ -45,9 +46,11 @@ class TransactionController extends Controller
 
     public function index(Request $request)
     {
+        $params = $this->params($request);
+
         return JsonResource::collection(
             $this->indexQuery($request)
-                ->paginate()
+                ->paginate($params->perPage)
         );
     }
 
@@ -65,6 +68,7 @@ class TransactionController extends Controller
             public mixed $accountId;
             public mixed $accountFromId;
             public mixed $accountToId;
+            public ?int $perPage;
 
             public function __construct(Request $request)
             {
@@ -79,33 +83,30 @@ class TransactionController extends Controller
                 $this->accountId = $request->get("account_id");
                 $this->accountFromId = $request->get("account_from_id");
                 $this->accountToId = $request->get("account_to_id");
+                $this->perPage = $request->get("per_page", 100);
             }
         };
     }
 
-    /**
-     * @param mixed $accountId
-     * @return SqlIfThenElse
-     */
-    public function relativeAmountExpression(mixed $accountId): SqlIfThenElse
+    public function relativeAmountExpression(mixed $accountId)
     {
         $typeCol = $this->transactionModel->transactionTypeCol();
         $amountCol = $this->transactionModel->transactionAmountCol();
 
-        $case = new SqlCase([
-            (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeWithdrawal)) => new SqlNegate($amountCol),
-            (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeDeposit)) => $amountCol,
-            (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeTransfer)) => new SqlNegate($amountCol),
-        ], 0);
-
-        return new SqlIfThenElse(
-            new SqlEqual(
-                $this->accountToModel->accountIdCol(),
-                ($accountId ?? "NULL")
-            ),
-            $this->transactionModel->transactionAmountCol(),
-            $case
-        );
+        return $accountId === null ?
+            $amountCol :
+            new SqlMultiply(
+                new SqlIfThenElse(
+                    new SqlEqual($this->transactionModel->fromAccountIdCol(), $accountId),
+                    1,
+                    -1
+                ),
+                new SqlCase([
+                    (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeWithdrawal)) => new SqlNegate($amountCol),
+                    (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeDeposit)) => $amountCol,
+                    (string)new SqlEqual($typeCol, new SqlQuote(Transaction::TypeTransfer)) => new SqlNegate($amountCol),
+                ], 0)
+            );
     }
 
     public function indexQuery(Request $request): Builder
